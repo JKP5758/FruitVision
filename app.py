@@ -10,9 +10,9 @@ def identifikasi_buah(image_path):
         print("Pastikan nama file benar dan berada di folder yang sama.\n")
         return
 
-    # Mengecilkan gambar 50% agar sesuai layar dan proses lebih ringan 
-    # (Sesuai dengan metode di jurnal: resize_factor = 0.5)
-    img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
+    # Semua gambar, seberapa pun besarnya, akan diubah menjadi 500x500 piksel
+    UKURAN_STANDAR = (500, 500)
+    img = cv2.resize(img, UKURAN_STANDAR)
 
     # --- TAHAP 2: PRA-PEMROSESAN (KONVERSI WARNA) ---
     # Mengubah ke HSV untuk deteksi warna, dan Grayscale untuk tekstur/bentuk
@@ -30,23 +30,38 @@ def identifikasi_buah(image_path):
     batas_atas_kuning = np.array([30, 255, 255])
     mask_kuning = cv2.inRange(hsv, batas_bawah_kuning, batas_atas_kuning)
 
+    # Rentang warna Hijau-Coklat untuk Durian
+    batas_bawah_durian = np.array([20, 30, 30]) # HSV lebih pudar
+    batas_atas_durian = np.array([50, 255, 200])
+    mask_durian = cv2.inRange(hsv, batas_bawah_durian, batas_atas_durian)
+
     # Menghitung jumlah piksel warna yang terdeteksi
     piksel_merah = cv2.countNonZero(mask_merah)
     piksel_kuning = cv2.countNonZero(mask_kuning)
+    piksel_durian = cv2.countNonZero(mask_durian)
 
-    # --- TAHAP 4: LOGIKA KLASIFIKASI ---
+    # --- TAHAP 4: EKSTRAKSI FITUR TEKSTUR (Metode GLCM) ---
+    # Menganalisis tingkat kekasaran/kehalusan permukaan buah dari gambar hitam-putih
+    glcm = graycomatrix(gray, distances=[5], angles=[0], levels=256, symmetric=True, normed=True)
+    kontras = graycoprops(glcm, 'contrast')[0, 0]
+    homogenitas = graycoprops(glcm, 'homogeneity')[0, 0]
+
+    # --- TAHAP 5: LOGIKA KLASIFIKASI ---
     # Jika piksel warna lebih dari 500, maka buah teridentifikasi
     jenis_buah = "Tidak Dikenali / Tidak Ada Buah"
     mask_aktif = None
 
-    if piksel_merah > 500:
+    if piksel_merah > 1000:
         jenis_buah = "Apel (Merah)"
         mask_aktif = mask_merah
-    elif piksel_kuning > 500:
+    elif piksel_kuning > 1000 and kontras < 500:
         jenis_buah = "Pisang (Kuning)"
         mask_aktif = mask_kuning
+    elif piksel_durian > 1000 and kontras > 500: 
+        jenis_buah = "Durian"
+        mask_aktif = mask_durian
 
-    # --- TAHAP 5: EKSTRAKSI FITUR BENTUK ---
+    # --- TAHAP 6: EKSTRAKSI FITUR BENTUK ---
     area = 0
     keliling = 0
     if mask_aktif is not None:
@@ -56,12 +71,6 @@ def identifikasi_buah(image_path):
             kontur_terbesar = max(contours, key=cv2.contourArea)
             area = cv2.contourArea(kontur_terbesar)          # Luas bentuk buah
             keliling = cv2.arcLength(kontur_terbesar, True)  # Keliling bentuk buah
-
-    # --- TAHAP 6: EKSTRAKSI FITUR TEKSTUR (Metode GLCM) ---
-    # Menganalisis tingkat kekasaran/kehalusan permukaan buah dari gambar hitam-putih
-    glcm = graycomatrix(gray, distances=[5], angles=[0], levels=256, symmetric=True, normed=True)
-    kontras = graycoprops(glcm, 'contrast')[0, 0]
-    homogenitas = graycoprops(glcm, 'homogeneity')[0, 0]
 
     # --- TAHAP 7: MENAMPILKAN HASIL DI TERMINAL ---
     print("\n" + "="*50)
@@ -89,5 +98,5 @@ def identifikasi_buah(image_path):
 # ==========================================
 if __name__ == "__main__":
     # UBAH 'apel.jpg' DENGAN NAMA FILE GAMBARMU!
-    nama_file_gambar = 'apel.jpg' 
+    nama_file_gambar = 'a1.png' 
     identifikasi_buah(nama_file_gambar)
