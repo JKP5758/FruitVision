@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.csv
+output/
+kalibrasi.csv
+.venv/
+venv/
+.DS_Store
