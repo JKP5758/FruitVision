@@ -39,10 +39,16 @@ def evaluasi_semua(headless=True, save_dir="output", data_root=None):
         for f, gt in sorted(files_gt):
             res = identifikasi_buah(f, verbose=False, headless=headless, save_dir=save_dir, database=db)
             pred = res["hasil"]
-            ok = (pred == gt)
+            # probabilistik: pred bisa "Apel (Merah) (93.5%)" -> cek startswith gt
+            ok = pred.startswith(gt) if isinstance(pred, str) else (pred == gt)
             benar += int(ok)
             status = "BENAR" if ok else "SALAH"
-            print(f" {os.path.basename(f):12} | GT: {gt:22} | Pred: {pred:22} | {status}")
+            # tampilkan prob jika ada
+            prob_str = ""
+            if res.get("semua_deteksi"):
+                top = res["semua_deteksi"][0]
+                prob_str = f" {top.get('probabilitas',0)*100:.1f}%"
+            print(f" {os.path.basename(f):12} | GT: {gt:22} | Pred: {pred:28} | {status}{prob_str}")
         acc = benar / len(files_gt) * 100 if files_gt else 0
         print("-"*60)
         print(f"Akurasi: {benar}/{len(files_gt)} ({acc:.1f}%)")
@@ -61,10 +67,14 @@ def evaluasi_semua(headless=True, save_dir="output", data_root=None):
         gt = LABEL_GROUND_TRUTH[f]
         res = identifikasi_buah(f, verbose=False, headless=headless, save_dir=save_dir, database=db)
         pred = res["hasil"]
-        ok = (pred == gt)
+        ok = pred.startswith(gt) if isinstance(pred, str) else (pred == gt)
         benar += int(ok)
         status = "BENAR" if ok else "SALAH"
-        print(f" {f:8} | GT: {gt:22} | Pred: {pred:22} | {status}")
+        prob_str = ""
+        if res.get("semua_deteksi"):
+            top = res["semua_deteksi"][0]
+            prob_str = f" {top.get('probabilitas',0)*100:.1f}%"
+        print(f" {f:8} | GT: {gt:22} | Pred: {pred:28} | {status}{prob_str}")
     acc = benar / len(files) * 100 if files else 0
     print("-"*60)
     print(f"Akurasi: {benar}/{len(files)} ({acc:.1f}%)")

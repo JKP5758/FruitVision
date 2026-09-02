@@ -26,13 +26,38 @@
         ]
       ]
     ],
+    "stats": {
+      "mean_circularity": 0.49748056511486327,
+      "std_circularity": 0.26135337950721177,
+      "mean_aspect_ratio": 1.1850300443593387,
+      "std_aspect_ratio": 0.10394257180875874,
+      "mean_contrast": 280.9707161803713,
+      "std_contrast": 42.86547937053698,
+      "min_circularity": 0.23864248445417285,
+      "max_circularity": 0.8553958186954032,
+      "min_aspect_ratio": 1.0402684563758389,
+      "max_aspect_ratio": 1.279527559055118,
+      "min_contrast": 232.55567344532858,
+      "max_contrast": 336.7719348659004,
+      "n": 3,
+      "hsv_mean": [
+        26.769301211608905,
+        229.9522635484174,
+        197.40297736451583
+      ],
+      "hsv_std": [
+        1.3063843239932094,
+        26.050352742124243,
+        14.159537017586436
+      ]
+    },
     "rules": {
-      "min_circularity": 0.2,
-      "max_circularity": 0.9,
-      "min_aspect_ratio": 0.9,
-      "max_aspect_ratio": 1.8,
-      "min_contrast": 200,
-      "max_contrast": 1600
+      "min_circularity": 0.08,
+      "max_circularity": 1.0,
+      "min_aspect_ratio": 0.98,
+      "max_aspect_ratio": 1.34,
+      "min_contrast": 206,
+      "max_contrast": 362
     }
   },
   "Durian": {
@@ -50,13 +75,38 @@
         ]
       ]
     ],
+    "stats": {
+      "mean_circularity": 0.5705281577799314,
+      "std_circularity": 0.08557922366698971,
+      "mean_aspect_ratio": 1.3940886699507389,
+      "std_aspect_ratio": 0.20911330049261082,
+      "mean_contrast": 1862.797292942314,
+      "std_contrast": 372.5594585884628,
+      "min_circularity": 0.5705281577799314,
+      "max_circularity": 0.5705281577799314,
+      "min_aspect_ratio": 1.3940886699507389,
+      "max_aspect_ratio": 1.3940886699507389,
+      "min_contrast": 1862.797292942314,
+      "max_contrast": 1862.797292942314,
+      "n": 1,
+      "hsv_mean": [
+        26.769301211608905,
+        229.9522635484174,
+        197.40297736451583
+      ],
+      "hsv_std": [
+        1.3063843239932094,
+        26.050352742124243,
+        14.159537017586436
+      ]
+    },
     "rules": {
       "min_circularity": 0.43,
       "max_circularity": 0.71,
       "min_aspect_ratio": 1.05,
       "max_aspect_ratio": 1.74,
-      "min_contrast": 1546,
-      "max_contrast": 2577
+      "min_contrast": 1397,
+      "max_contrast": 2328
     }
   },
   "Jeruk": {
@@ -74,13 +124,38 @@
         ]
       ]
     ],
+    "stats": {
+      "mean_circularity": 0.7793061201357546,
+      "std_circularity": 0.11689591802036318,
+      "mean_aspect_ratio": 1.045731707317073,
+      "std_aspect_ratio": 0.15685975609756095,
+      "mean_contrast": 1011.5071135760793,
+      "std_contrast": 202.30142271521586,
+      "min_circularity": 0.7793061201357546,
+      "max_circularity": 0.7793061201357546,
+      "min_aspect_ratio": 1.045731707317073,
+      "max_aspect_ratio": 1.045731707317073,
+      "min_contrast": 1011.5071135760793,
+      "max_contrast": 1011.5071135760793,
+      "n": 1,
+      "hsv_mean": [
+        26.769301211608905,
+        229.9522635484174,
+        197.40297736451583
+      ],
+      "hsv_std": [
+        1.3063843239932094,
+        26.050352742124243,
+        14.159537017586436
+      ]
+    },
     "rules": {
       "min_circularity": 0.58,
       "max_circularity": 0.97,
       "min_aspect_ratio": 0.78,
       "max_aspect_ratio": 1.31,
-      "min_contrast": 828,
-      "max_contrast": 1380
+      "min_contrast": 758,
+      "max_contrast": 1264
     }
   },
   "Pisang (Kuning/Hijau)": {
@@ -110,13 +185,38 @@
         ]
       ]
     ],
+    "stats": {
+      "mean_circularity": 0.3182117826540301,
+      "std_circularity": 0.047731767398104516,
+      "mean_aspect_ratio": 1.3789473684210527,
+      "std_aspect_ratio": 0.2068421052631579,
+      "mean_contrast": 622.126245210728,
+      "std_contrast": 124.42524904214561,
+      "min_circularity": 0.3182117826540301,
+      "max_circularity": 0.3182117826540301,
+      "min_aspect_ratio": 1.3789473684210527,
+      "max_aspect_ratio": 1.3789473684210527,
+      "min_contrast": 622.126245210728,
+      "max_contrast": 622.126245210728,
+      "n": 1,
+      "hsv_mean": [
+        26.769301211608905,
+        229.9522635484174,
+        197.40297736451583
+      ],
+      "hsv_std": [
+        1.3063843239932094,
+        26.050352742124243,
+        14.159537017586436
+      ]
+    },
     "rules": {
       "min_circularity": 0.24,
       "max_circularity": 0.4,
       "min_aspect_ratio": 1.03,
       "max_aspect_ratio": 1.72,
-      "min_contrast": 505,
-      "max_contrast": 841
+      "min_contrast": 466,
+      "max_contrast": 777
     }
   }
 }

@@ -57,6 +57,7 @@ small{color:#94a3b8}
     </div>
     <div id="result">
       <h3 id="hasil">—</h3>
+      <div id="probs" style="margin:8px 0"></div>
       <div class="kv" id="kv"></div>
       <div id="latency" style="font-size:12px;color:#64748b;margin-top:6px"></div>
     </div>
@@ -161,6 +162,14 @@ function renderResult(j, dt){
   if(j.fitur && Object.keys(j.fitur).length){
     kv.innerHTML = Object.entries(j.fitur).map(([k,v])=> `<div><span>${k}</span><br><b>${typeof v==='number'?v.toFixed(2):v}</b></div>`).join('');
   } else kv.innerHTML='';
+  const probs=document.getElementById('probs');
+  if(j.semua_deteksi && j.semua_deteksi.length){
+    probs.innerHTML = j.semua_deteksi.map(d=>{
+      const p=d.probabilitas||0;
+      const col=p>60?'#22c55e':p>30?'#eab308':'#64748b';
+      return `<div style="display:flex;align-items:center;gap:6px;margin:4px 0"><span style="flex:0 0 140px;font-size:12px">${d.nama_buah}</span><div style="flex:1;background:#334155;border-radius:6px;height:14px;overflow:hidden"><div style="width:${p}%;background:${col};height:100%"></div></div><span style="font-size:12px;width:40px;text-align:right">${p}%</span></div>`;
+    }).join('');
+  } else probs.innerHTML='';
 }
 
 async function uploadFile(){
@@ -169,7 +178,15 @@ async function uploadFile(){
   const fd=new FormData(); fd.append('file', inp.files[0]);
   const r=await fetch('/upload',{method:'POST', body:fd});
   const j=await r.json();
-  document.getElementById('uploadResult').innerHTML = `<b>${j.hasil}</b> <span style="color:#94a3b8">(${j.latency_ms} ms)</span><br><small>`+ (j.fitur?Object.entries(j.fitur).map(([k,v])=>`${k}: ${v.toFixed(2)}`).join(' • '):'') +'</small>';
+  let probsHtml='';
+  if(j.semua_deteksi){
+    probsHtml = j.semua_deteksi.map(d=>{
+      const p=d.probabilitas||0;
+      const col=p>60?'#22c55e':p>30?'#eab308':'#64748b';
+      return `<div style="display:flex;align-items:center;gap:6px;margin:3px 0"><span style="flex:0 0 120px;font-size:11px">${d.nama_buah}</span><div style="flex:1;background:#334155;border-radius:6px;height:10px;overflow:hidden"><div style="width:${p}%;background:${col};height:100%"></div></div><span style="font-size:11px;width:35px;text-align:right">${p}%</span></div>`;
+    }).join('');
+  }
+  document.getElementById('uploadResult').innerHTML = `<b>${j.hasil}</b> <span style="color:#94a3b8">(${j.latency_ms} ms)</span><br><small>`+ (j.fitur?Object.entries(j.fitur).map(([k,v])=>`${k}: ${typeof v==='number'?v.toFixed(2):v}`).join(' • '):'') +'</small><div style="margin-top:6px">'+probsHtml+'</div>';
   if(j.bbox_image){
     const img=document.getElementById('uploadPreview');
     img.src='data:image/jpeg;base64,'+j.bbox_image;

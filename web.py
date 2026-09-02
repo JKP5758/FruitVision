@@ -92,16 +92,22 @@ def index():
 def api_classes():
     db = get_database()
     scan = scan_data_buah("data_buah")
+    # kirim stats jika ada, fallback rules
+    db_out={}
+    for k,v in db.items():
+        db_out[k]= v.get("stats") or v.get("rules")
     return jsonify({
         "classes": list(db.keys()),
         "counts": {k: len(v) for k, v in scan.items()},
-        "database": {k: v["rules"] for k, v in db.items()}
+        "database": db_out
     })
 
 @app.route("/api/calibrate", methods=["POST"])
 def api_calibrate():
     run_kalibrasi()
-    return jsonify({"status": "ok", "database": {k: v["rules"] for k,v in get_database().items()}})
+    db=get_database()
+    db_out={k: v.get("stats") or v.get("rules") for k,v in db.items()}
+    return jsonify({"status": "ok", "database": db_out})
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -134,7 +140,7 @@ def predict():
             "objek_terdeteksi": res.get("objek_terdeteksi", False),
             "latency_ms": round(latency, 1),
             "semua_deteksi": [
-                {"nama_buah": d["nama_buah"], "match": d["match"], "circularity": round(d["circularity"],3), "aspect_ratio": round(d["aspect_ratio"],2), "kontras": round(d["kontras"],1)}
+                {"nama_buah": d["nama_buah"], "probabilitas": round(d.get("probabilitas",0)*100,1), "circularity": round(d["circularity"],3), "aspect_ratio": round(d["aspect_ratio"],2), "kontras": round(d["kontras"],1)}
                 for d in res.get("semua_deteksi", [])
             ]
         })
@@ -173,6 +179,8 @@ def upload():
         "bbox": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])} if bbox else None,
         "bbox_image": bbox_b64,
         "fitur": res.get("fitur", {}),
+        "probabilitas": res.get("semua_deteksi", [{}])[0].get("probabilitas",0) if res.get("semua_deteksi") else 0,
+        "semua_deteksi": [{"nama_buah": d["nama_buah"], "probabilitas": round(d.get("probabilitas",0)*100,1)} for d in res.get("semua_deteksi", [])],
         "latency_ms": round(latency,1),
     })
 
