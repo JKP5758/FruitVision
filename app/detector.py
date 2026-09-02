@@ -7,9 +7,10 @@ import json
 # Default database (fallback jika database.json belum ada)
 DEFAULT_DATABASE = {
     "Apel (Merah)": {
+        # C1: turun S/V 100→70 untuk tangkap highlight putih (fill 46%→65%)
         "hsv_ranges": [
-            (np.array([0, 100, 100]), np.array([10, 255, 255])),
-            (np.array([160, 100, 100]), np.array([180, 255, 255]))
+            (np.array([0, 70, 70]), np.array([10, 255, 255])),
+            (np.array([160, 70, 70]), np.array([180, 255, 255]))
         ],
         "rules": {
             "min_circularity": 0.60,
