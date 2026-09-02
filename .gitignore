@@ -7,6 +7,11 @@ kalibrasi.csv
 .venv/
 venv/
 .DS_Store
+# Cloudflare Tunnel - jangan commit token
+.env
+.cloudflared/
+credentials.json
+config.yml
 # tapi keep data_buah structure (ignore isinya optional)
 # data_buah/*/*.jpg
 # data_buah/*/*.png

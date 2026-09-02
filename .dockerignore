@@ -8,3 +8,6 @@ output
 venv
 .DS_Store
 *.log
+.env
+.cloudflared
+credentials.json

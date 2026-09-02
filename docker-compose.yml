@@ -2,7 +2,7 @@ services:
   web:
     build: .
     ports:
-      - "5000:5000"
+      - "5000:5000"  # keep untuk debug lokal (sesuai request)
     volumes:
       - ./data_buah:/app/data_buah
       - ./output:/app/output
@@ -10,3 +10,12 @@ services:
     environment:
       - PORT=5000
     restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on:
+      - web
+    restart: unless-stopped
+    env_file:
+      - .env
