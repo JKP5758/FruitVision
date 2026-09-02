@@ -7,3 +7,6 @@ kalibrasi.csv
 .venv/
 venv/
 .DS_Store
+# tapi keep data_buah structure (ignore isinya optional)
+# data_buah/*/*.jpg
+# data_buah/*/*.png

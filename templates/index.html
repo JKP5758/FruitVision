@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identifikasi Buah - Live Camera & Upload</title>
+<style>
+*{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,Arial}
+body{margin:0;background:#0f172a;color:#e2e8f0}
+header{padding:16px 20px;background:#1e293b;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+header h1{margin:0;font-size:18px}
+.badge{background:#334155;padding:6px 10px;border-radius:8px;font-size:12px}
+.container{max-width:1100px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr 360px;gap:20px}
+@media(max-width:900px){.container{grid-template-columns:1fr}}
+.card{background:#1e293b;border-radius:14px;padding:16px;box-shadow:0 4px 20px rgba(0,0,0,.3)}
+.video-wrap{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
+video,canvas{width:100%;height:100%;object-fit:cover}
+#overlay{position:absolute;inset:0;pointer-events:none}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button{padding:10px 14px;border:0;border-radius:10px;cursor:pointer;font-weight:600}
+.btn-primary{background:#22c55e;color:#052e16}
+.btn-secondary{background:#334155;color:#e2e8f0}
+.btn-danger{background:#ef4444;color:white}
+label.file{padding:10px 14px;background:#3b82f6;color:white;border-radius:10px;cursor:pointer;display:inline-block}
+#result{margin-top:12px;padding:12px;background:#0f172a;border-radius:10px;min-height:80px}
+#result h3{margin:0 0 8px 0;color:#22c55e}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px}
+.kv span{color:#94a3b8}
+.count{font-size:13px;color:#cbd5e1}
+.count b{color:#22c55e}
+#uploadPreview{max-width:100%;border-radius:10px;margin-top:10px;display:none}
+small{color:#94a3b8}
+</style>
+</head>
+<body>
+<header>
+  <h1>🍎 Identifikasi Buah — Live Camera & Upload</h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span class="badge" id="classBadge">memuat...</span>
+    <button class="btn-secondary" onclick="calibrate()" style="padding:6px 10px">🔄 Kalibrasi Ulang</button>
+  </div>
+</header>
+
+<div class="container">
+  <div class="card">
+    <h3 style="margin:0 0 10px 0">Kamera Live</h3>
+    <div class="video-wrap" id="videoWrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="noCam" style="position:absolute;color:#94a3b8;text-align:center;padding:20px;display:none">Kamera tidak aktif<br><small>Izinkan akses kamera atau gunakan Upload</small></div>
+    </div>
+    <div class="controls">
+      <button class="btn-primary" id="btnStart" onclick="startCam()">▶️ Mulai Kamera</button>
+      <button class="btn-danger" id="btnStop" onclick="stopCam()" style="display:none">⏹️ Stop</button>
+      <button class="btn-secondary" onclick="captureOnce()">📸 Deteksi Sekali</button>
+      <span id="fps" style="align-self:center;color:#94a3b8;font-size:13px"></span>
+    </div>
+    <div id="result">
+      <h3 id="hasil">—</h3>
+      <div class="kv" id="kv"></div>
+      <div id="latency" style="font-size:12px;color:#64748b;margin-top:6px"></div>
+    </div>
+    <small>Tip: arahkan buah ke tengah, cahaya cukup. Deteksi tiap 400ms saat kamera aktif.</small>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px 0">Upload Gambar</h3>
+    <p style="font-size:13px;color:#94a3b8">Juga tersedia untuk foto dari galeri (tetap berfungsi tanpa kamera).</p>
+    <label class="file">📁 Pilih Gambar <input type="file" id="fileInput" accept="image/*" style="display:none"></label>
+    <button class="btn-secondary" onclick="uploadFile()" style="margin-left:6px">Upload & Deteksi</button>
+    <img id="uploadPreview" />
+    <div id="uploadResult" style="margin-top:10px;font-size:13px"></div>
+
+    <hr style="border:0;border-top:1px solid #334155;margin:16px 0">
+    <h4 style="margin:0 0 8px 0">Dataset</h4>
+    <div id="counts" class="count"></div>
+    <small>Folder: <code>data_buah/(nama_buah)/</code> — tambah folder baru = tambah kelas otomatis. Minimal 5 gambar/kelas lalu auto-kalibrasi.</small>
+    <div id="rules" style="margin-top:10px;font-size:12px;color:#94a3b8;max-height:160px;overflow:auto;background:#0f172a;padding:8px;border-radius:8px"></div>
+  </div>
+</div>
+
+<canvas id="hidden" style="display:none"></canvas>
+<script>
+const video=document.getElementById('video');
+const overlay=document.getElementById('overlay');
+const octx=overlay.getContext('2d');
+const hidden=document.getElementById('hidden');
+const hctx=hidden.getContext('2d');
+let stream=null, timer=null, lastBox=null;
+
+async function fetchClasses(){
+  const r=await fetch('/api/classes'); const j=await r.json();
+  document.getElementById('classBadge').textContent = j.classes.join(' • ') || '—';
+  const countsEl=document.getElementById('counts');
+  countsEl.innerHTML = Object.entries(j.counts).map(([k,v])=> `<div>${k}: <b>${v}</b> ${v<5?'<span style="color:#f59e0b">(kurang, min 5)</span>':''}</div>`).join('') || '<span style="color:#ef4444">belum ada data_buah/</span>';
+  document.getElementById('rules').textContent = JSON.stringify(j.database, null, 2);
+}
+fetchClasses();
+
+function resizeOverlay(){
+  const rect=document.getElementById('videoWrap').getBoundingClientRect();
+  overlay.width=rect.width; overlay.height=rect.height;
+}
+window.addEventListener('resize', resizeOverlay);
+
+async function startCam(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment", width:640, height:480}, audio:false});
+    video.srcObject=stream;
+    await video.play();
+    document.getElementById('noCam').style.display='none';
+    document.getElementById('btnStart').style.display='none';
+    document.getElementById('btnStop').style.display='inline-block';
+    resizeOverlay();
+    timer=setInterval(captureAndPredict, 400);
+  }catch(e){
+    document.getElementById('noCam').style.display='block';
+    alert('Gagal akses kamera: '+e.message+' — gunakan Upload.');
+  }
+}
+function stopCam(){
+  if(timer) clearInterval(timer); timer=null;
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  stream=null;
+  document.getElementById('btnStart').style.display='inline-block';
+  document.getElementById('btnStop').style.display='none';
+  octx.clearRect(0,0,overlay.width,overlay.height);
+}
+
+async function captureAndPredict(){
+  if(!video.videoWidth) return;
+  hidden.width=640; hidden.height=480;
+  hctx.drawImage(video,0,0,hidden.width,hidden.height);
+  const b64=hidden.toDataURL('image/jpeg',0.7);
+  const t0=performance.now();
+  const r=await fetch('/predict',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image:b64})});
+  const j=await r.json();
+  const dt=(performance.now()-t0).toFixed(0);
+  renderResult(j, dt);
+  drawBox(j.bbox);
+}
+
+async function captureOnce(){ if(stream) await captureAndPredict(); else startCam(); }
+
+function drawBox(bbox){
+  octx.clearRect(0,0,overlay.width,overlay.height);
+  if(!bbox) return;
+  // bbox dari detector relatif ke 500px width, scale ke overlay size
+  const scaleX=overlay.width/500;
+  // tinggi overlay = width * (videoHeight/videoWidth) ≈ tapi kita scale Y juga dengan scaleX karena detector preserve aspect dari 500 width
+  // Sederhana: scale sama
+  const x=bbox.x*scaleX, y=bbox.y*scaleX, w=bbox.w*scaleX, h=bbox.h*scaleX;
+  octx.strokeStyle='#22c55e'; octx.lineWidth=3; octx.strokeRect(x,y,w,h);
+  octx.fillStyle='#22c55e'; octx.font='14px system-ui'; octx.fillText(document.getElementById('hasil').textContent, x, Math.max(12,y-6));
+}
+
+function renderResult(j, dt){
+  document.getElementById('hasil').textContent = j.hasil || j.error || '—';
+  document.getElementById('latency').textContent = j.latency_ms ? `latency ${j.latency_ms} ms (total ${dt} ms)` : '';
+  const kv=document.getElementById('kv');
+  if(j.fitur && Object.keys(j.fitur).length){
+    kv.innerHTML = Object.entries(j.fitur).map(([k,v])=> `<div><span>${k}</span><br><b>${typeof v==='number'?v.toFixed(2):v}</b></div>`).join('');
+  } else kv.innerHTML='';
+}
+
+async function uploadFile(){
+  const inp=document.getElementById('fileInput');
+  if(!inp.files.length){ alert('Pilih gambar dulu'); return; }
+  const fd=new FormData(); fd.append('file', inp.files[0]);
+  const r=await fetch('/upload',{method:'POST', body:fd});
+  const j=await r.json();
+  document.getElementById('uploadResult').innerHTML = `<b>${j.hasil}</b> <span style="color:#94a3b8">(${j.latency_ms} ms)</span><br><small>`+ (j.fitur?Object.entries(j.fitur).map(([k,v])=>`${k}: ${v.toFixed(2)}`).join(' • '):'') +'</small>';
+  if(j.bbox_image){
+    const img=document.getElementById('uploadPreview');
+    img.src='data:image/jpeg;base64,'+j.bbox_image;
+    img.style.display='block';
+  }
+}
+document.getElementById('fileInput').addEventListener('change', (e)=>{
+  if(e.target.files[0]){
+    const url=URL.createObjectURL(e.target.files[0]);
+    const img=document.getElementById('uploadPreview');
+    img.src=url; img.style.display='block';
+  }
+});
+
+async function calibrate(){
+  const b=document.querySelector('button[onclick="calibrate()"]');
+  b.textContent='⏳ Kalibrasi...'; b.disabled=true;
+  const r=await fetch('/api/calibrate',{method:'POST'});
+  const j=await r.json();
+  b.textContent='🔄 Kalibrasi Ulang'; b.disabled=false;
+  fetchClasses();
+  alert('Kalibrasi selesai: '+Object.keys(j.database).join(', '));
+}
+</script>
+</body>
+</html>
