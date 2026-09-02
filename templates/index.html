@@ -34,10 +34,10 @@ small{color:#94a3b8}
 </head>
 <body>
 <header>
-  <h1>🍎 Identifikasi Buah — Live Camera & Upload</h1>
+  <h1>Identifikasi Buah — Live Camera & Upload</h1>
   <div style="display:flex;gap:8px;align-items:center">
     <span class="badge" id="classBadge">memuat...</span>
-    <button class="btn-secondary" onclick="calibrate()" style="padding:6px 10px">🔄 Kalibrasi Ulang</button>
+    <button class="btn-secondary" onclick="calibrate()" style="padding:6px 10px">Kalibrasi Ulang</button>
   </div>
 </header>
 
@@ -50,8 +50,8 @@ small{color:#94a3b8}
       <div id="noCam" style="position:absolute;color:#94a3b8;text-align:center;padding:20px;display:none">Kamera tidak aktif<br><small>Izinkan akses kamera atau gunakan Upload</small></div>
     </div>
     <div class="controls">
-      <button class="btn-primary" id="btnStart" onclick="startCam()">▶️ Mulai Kamera</button>
-      <button class="btn-danger" id="btnStop" onclick="stopCam()" style="display:none">⏹️ Stop</button>
+      <button class="btn-primary" id="btnStart" onclick="startCam()">▶Mulai Kamera</button>
+      <button class="btn-danger" id="btnStop" onclick="stopCam()" style="display:none">Stop</button>
       <button class="btn-secondary" onclick="captureOnce()">📸 Deteksi Sekali</button>
       <span id="fps" style="align-self:center;color:#94a3b8;font-size:13px"></span>
     </div>
@@ -141,7 +141,16 @@ async function captureAndPredict(){
   drawBox(j.bbox);
 }
 
-async function captureOnce(){ if(stream) await captureAndPredict(); else startCam(); }
+async function captureOnce(){
+  // C: auto-stop setelah 1 jepret (hemat)
+  if(!stream){
+    await startCam();
+    // tunggu video siap
+    await new Promise(r=>setTimeout(r,800));
+  }
+  await captureAndPredict();
+  stopCam();
+}
 
 function drawBox(bbox){
   octx.clearRect(0,0,overlay.width,overlay.height);

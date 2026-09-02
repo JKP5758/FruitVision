@@ -186,19 +186,19 @@
       ]
     ],
     "stats": {
-      "mean_circularity": 0.3182117826540301,
-      "std_circularity": 0.047731767398104516,
-      "mean_aspect_ratio": 1.3789473684210527,
-      "std_aspect_ratio": 0.2068421052631579,
-      "mean_contrast": 622.126245210728,
-      "std_contrast": 124.42524904214561,
-      "min_circularity": 0.3182117826540301,
-      "max_circularity": 0.3182117826540301,
+      "mean_circularity": 0.33582892051428037,
+      "std_circularity": 0.048059047583643016,
+      "mean_aspect_ratio": 2.452285586928466,
+      "std_aspect_ratio": 0.5830784148613966,
+      "mean_contrast": 390.27573590896327,
+      "std_contrast": 192.89989974291348,
+      "min_circularity": 0.2589441274015359,
+      "max_circularity": 0.41506457223677545,
       "min_aspect_ratio": 1.3789473684210527,
-      "max_aspect_ratio": 1.3789473684210527,
-      "min_contrast": 622.126245210728,
+      "max_aspect_ratio": 2.9304347826086956,
+      "min_contrast": 141.06602298850575,
       "max_contrast": 622.126245210728,
-      "n": 1,
+      "n": 6,
       "hsv_mean": [
         26.769301211608905,
         229.9522635484174,
@@ -211,12 +211,12 @@
       ]
     },
     "rules": {
-      "min_circularity": 0.24,
-      "max_circularity": 0.4,
-      "min_aspect_ratio": 1.03,
-      "max_aspect_ratio": 1.72,
-      "min_contrast": 466,
-      "max_contrast": 777
+      "min_circularity": 0.22,
+      "max_circularity": 0.45,
+      "min_aspect_ratio": 0.99,
+      "max_aspect_ratio": 3.32,
+      "min_contrast": 20,
+      "max_contrast": 742
     }
   }
 }
