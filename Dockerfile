@@ -11,8 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# pastikan folder ada
-RUN mkdir -p data_buah/apel data_buah/pisang data_buah/jeruk data_buah/durian output app
+# pastikan folder ada (fleksibel, jangan hard-code 4 buah)
+RUN mkdir -p data_buah output app
 
 EXPOSE 5000
 ENV PORT=5000

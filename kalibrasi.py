@@ -53,9 +53,20 @@ def main():
     parser.add_argument("--data", type=str, default="data_buah", help="Root data_buah")
     parser.add_argument("--out-csv", type=str, default="kalibrasi.csv")
     parser.add_argument("--out-json", type=str, default="app/database.json")
+    parser.add_argument("--reset", action="store_true", help="Reset database.json sebelum kalibrasi (hapus ghost class)")
     args=parser.parse_args()
 
-    db = get_database()
+    if args.reset:
+        for p in [args.out_json, "database.json", args.out_csv]:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+                    print(f"[RESET] {p} dihapus")
+            except: pass
+        # buat db kosong agar tidak load stale
+        db = DEFAULT_DATABASE
+    else:
+        db = get_database()
     scan = scan_data_buah(args.data)
     if not scan:
         print(f"[ERROR] Tidak ada data di {args.data}/")
