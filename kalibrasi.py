@@ -234,7 +234,12 @@ def main():
     os.makedirs(os.path.dirname(args.out_json) or ".", exist_ok=True)
     with open(args.out_json,"w") as f: json.dump(out_json,f,indent=2)
     print(f"\n[INFO] {args.out_json} {len(out_json)} kelas, {sum(len(v['templates']) for v in new_db.values())} templates")
-    if args.out_json!="database.json":
-        with open("database.json","w") as f: json.dump(out_json,f,indent=2)
+    # Sinkron ke root hanya untuk backward compat, tapi app/database.json adalah primary
+    if args.out_json != "database.json":
+        try:
+            with open("database.json","w") as f: json.dump(out_json,f,indent=2)
+            print(f"[INFO] Sinkron database.json (root) untuk fallback")
+        except Exception as e:
+            print(f"[WARN] Gagal sinkron database.json: {e}")
 
 if __name__=="__main__": main()

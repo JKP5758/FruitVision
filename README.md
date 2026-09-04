@@ -25,7 +25,7 @@ uas/
 ## Fitur
 - **Dataset fleksibel:** `mkdir data_buah/mangga && cp foto.jpg` → auto terdeteksi, `GET /api/classes` muncul `Mangga`. Tidak hard-code 4 buah.
 - **Reset kalibrasi:** sebelum kalibrasi ulang `rm app/database.json` (via `kalibrasi.py --reset`, `POST /api/calibrate`, `docker start`) — hapus ghost class jika foto/folder dihapus.
-- **Probabilistik:** bukan `Tidak Dikenali` biner, tapi `Apel (Merah) (93.5%)` + bar `Apel 93% | Pisang 1%` (Gaussian `exp(-0.5*z²)`). Jika `max<30%` → `Tidak ada buah terdeteksi (tertinggi Apel 24%)`.
+- **Probabilistik:** bukan `Tidak Dikenali` biner, tapi `Apel (Merah) (93.5%)` + bar `Apel 93% | Pisang 1%` (hist chi2 `exp(-d)` + `DETECTION_THRESHOLD=0.15`). Jika `max<15%` → `Tidak ada buah terdeteksi (tertinggi Apel 12%)`.
 - **Dua mode web:** Kamera Live (400ms) + Upload — keduanya `/predict` (base64) & `/upload` (multipart).
 - **Deteksi Sekali auto-stop:** `📸 Deteksi Sekali` → 1 jepret → kamera mati (hemat).
 - **Docker + Cloudflare Tunnel:** `web:5000` lokal tetap + `https://<subdomain>` via `cloudflared` sidecar.
@@ -87,13 +87,14 @@ curl -I https://buah.example.com/api/classes  # 200 + cf-ray
 ```
 
 ### Compose
-`docker-compose.yml` sekarang 2 service:
+`docker-compose.yml` sekarang 2 service (single source `app/database.json` + watchdog env):
 ```yaml
 services:
   web:
     build: .
     ports: ["5000:5000"]  # keep lokal
-    volumes: [...]
+    volumes: ["./data_buah:/app/data_buah", "./output:/app/output", "./app/database.json:/app/app/database.json"]
+    environment: [PORT=5000, WATCHDOG_ENABLED=true]
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
@@ -101,6 +102,7 @@ services:
     restart: unless-stopped
     env_file: [.env]
 ```
+Watchdog `inotify 2s debounce` (single timer anti-spam) + fallback poller 10s jika `watchdog` tidak tersedia/disabled. Atur via `.env` `WATCHDOG_ENABLED=true/false`.
 
 ### Troubleshooting
 - `502 Bad Gateway` → Service URL salah (pakai `localhost` di sidecar) → ganti `http://web:5000`.
@@ -120,11 +122,13 @@ python app.py --eval --data data_buah --headless  # 8/8
 ```
 
 ## Metode
-1. Resize 500px, threshold 1%
-2. HSV inRange + morfologi 5x5 (Apel S/V 70)
-3. Kontur → circularity, aspect
+1. Resize `RESIZE_WIDTH=500`, threshold `MIN_AREA_RATIO=0.5%`
+2. GrabCut multi + HSV fallback + morfologi 5x5
+3. Kontur → circularity, aspect + hist H/S/L (chi2) + Hu moments
 4. GLCM (150px max) → contrast
-5. **Probabilistik Gaussian** `prob = mean(exp(-0.5*z²))` per fitur, bukan min/max hard-code. `z=|x-mean|/std`, `std` clamp minimal. `max<30%` → Tidak ada buah.
+5. **Probabilistik** `prob = exp(-d)` dengan `d = H*0.5+S*0.3+L*0.2 + Hu*0.05 + shape*0.08`, fallback Gaussian `exp(-0.5*z²)`. `DETECTION_THRESHOLD=0.15 (15%)` → di bawah itu `Tidak ada buah`. Konstanta di `app/detector.py:7-15`.
+
+> Catatan path `NLP/uas` adalah penamaan folder kampus, project sebenarnya Computer Vision klasik (bukan NLP tekstual).
 
 ## Hasil Evaluasi (tanpa a1, 3 Apel +5 Pisang)
 ```

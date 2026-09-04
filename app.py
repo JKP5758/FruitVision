@@ -49,10 +49,10 @@ def evaluasi_semua(headless=True, save_dir="output", data_root=None):
         print(f"Akurasi: {benar}/{len(files_gt)} ({acc:.1f}%)")
         print("="*60 + "\n")
         return acc
-    # fallback legacy: eval a1/j1/p1/d1 di root
+    # fallback legacy: eval a1/j1/p1/d1 di root (deprecated, gunakan --data data_buah)
     files = [f for f in os.listdir(".") if f.lower().endswith(".png") and f in LABEL_GROUND_TRUTH]
     if not files:
-        print("[WARN] Tidak ada file png ground truth di root.")
+        print("[WARN] Tidak ada file png ground truth di root. Gunakan --data data_buah (primary) atau isi LABEL_GROUND_TRUTH.")
         return 0
     benar = 0
     print("\n" + "="*60)

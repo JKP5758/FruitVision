@@ -7,8 +7,8 @@ from app.detector import identifikasi_frame, get_database, scan_data_buah
 app = Flask(__name__)
 CORS(app)
 
-# --- watchdog auto kalibrasi ---
-WATCHDOG_ENABLED = False
+# --- watchdog auto kalibrasi (aktif via env, efisien inotify 2s) ---
+WATCHDOG_ENABLED = os.getenv("WATCHDOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
@@ -18,6 +18,8 @@ except ImportError:
 
 last_calibrate = 0
 calibrate_lock = threading.Lock()
+_watchdog_timer = None
+_watchdog_timer_lock = threading.Lock()
 
 def run_kalibrasi(reset=True):
     global last_calibrate
@@ -61,17 +63,30 @@ if WATCHDOG_AVAILABLE and WATCHDOG_ENABLED:
             # untuk folder, hanya event deleted/created/moved
             if is_dir and event.event_type not in ("deleted", "created", "moved"):
                 return
-            # debounce via timer, reset=True untuk hapus ghost
-            threading.Timer(2.0, lambda: run_kalibrasi(reset=True)).start()
+            # debounce single timer: cancel timer lama, buat baru 2s
+            global _watchdog_timer
+            with _watchdog_timer_lock:
+                if _watchdog_timer is not None:
+                    try:
+                        _watchdog_timer.cancel()
+                    except: pass
+                _watchdog_timer = threading.Timer(2.0, lambda: run_kalibrasi(reset=True))
+                _watchdog_timer.daemon = True
+                _watchdog_timer.start()
 
     try:
         observer = Observer()
         observer.schedule(Handler(), path="data_buah", recursive=True)
         observer.start()
-        print("[WATCHDOG] Auto-kalibrasi aktif memantau data_buah/")
+        print("[WATCHDOG] Auto-kalibrasi aktif memantau data_buah/ (inotify 2s debounce, WATCHDOG_ENABLED=true)")
     except Exception as e:
         print(f"[WARN] Watchdog gagal: {e}")
         WATCHDOG_AVAILABLE = False
+else:
+    if not WATCHDOG_AVAILABLE:
+        print("[WATCHDOG] watchdog lib tidak tersedia — pakai poller 10s")
+    elif not WATCHDOG_ENABLED:
+        print("[WATCHDOG] Nonaktif via WATCHDOG_ENABLED=false — pakai poller 10s")
 
 # fallback polling tiap 10s jika watchdog tidak tersedia
 if not (WATCHDOG_AVAILABLE and WATCHDOG_ENABLED):
@@ -220,15 +235,20 @@ def upload():
 if __name__ == "__main__":
     # ensure data_buah ada (dinamis, tidak hard-code)
     os.makedirs("data_buah", exist_ok=True)
-    # jika database sudah ada dan valid (multi-template), jangan reset otomatis (hemat) - cek kedua lokasi
+    # warning token dummy
+    token = os.getenv("TUNNEL_TOKEN", "")
+    if token.startswith("dummy-") or token == "":
+        print("[WARN] TUNNEL_TOKEN dummy/kosong — Cloudflare Tunnel tidak akan connect (isi .env dengan token asli)")
+    # jika database sudah ada dan valid (multi-template), jangan reset otomatis (hemat) - prioritaskan app/database.json
     has_templates = False
-    for _p in ["database.json", "app/database.json"]:
+    for _p in ["app/database.json", "database.json"]:
         if os.path.exists(_p) and os.path.getsize(_p) > 1000:
             try:
                 import json as _js
                 with open(_p,"r") as f: _d=_js.load(f)
                 if any("templates" in v for v in _d.values()):
                     has_templates = True
+                    print(f"[STARTUP] Database ditemukan di {_p} ({len(_d)} kelas)")
                     break
             except: pass
     if has_templates:
@@ -237,5 +257,5 @@ if __name__ == "__main__":
         print("[STARTUP] Reset & kalibrasi awal...")
         run_kalibrasi(reset=True)
     port = int(os.environ.get("PORT", 5000))
-    print(f"[WEB] http://localhost:{port} — classes: {list(get_database().keys())}")
+    print(f"[WEB] http://localhost:{port} — classes: {list(get_database().keys())} — watchdog={'ON' if (WATCHDOG_AVAILABLE and WATCHDOG_ENABLED) else 'OFF (poller 10s)'}")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

@@ -7,9 +7,23 @@ import json
 DEFAULT_DATABASE = {}
 LABEL_MAP = {}
 
+# === Konstanta global (disepakati 15% threshold) ===
+DETECTION_THRESHOLD = 0.15  # prob < 0.15 -> Tidak ada buah terdeteksi (sinkron README)
+RESIZE_WIDTH = 500
+MIN_AREA_RATIO = 0.005
+IOU_NMS_THRESHOLD = 0.5
+MERGE_AR_RANGE = (1.8, 3.5)
+HIST_WEIGHTS = (0.5, 0.3, 0.2)  # H, S, L
+HU_WEIGHT = 0.05
+SHAPE_WEIGHT = 0.08
+
+def _dist_to_prob(dist, scale=1.0):
+    """Konversi chi2/Hu distance -> probabilitas 0-1 konsisten."""
+    return max(0.0, min(1.0, math.exp(-dist * scale)))
+
 def _load_database():
-    # Prioritaskan database.json (210K templates) agar stale app/database.json tidak dipakai
-    candidates = ["database.json", "app/database.json", "data_buah/database.json"]
+    # Single source of truth: app/database.json (sinkron kalibrasi.py)
+    candidates = ["app/database.json", "database.json", "data_buah/database.json"]
     for p in candidates:
         if os.path.exists(p):
             try:
@@ -121,7 +135,7 @@ def _grabcut_multi(bgr_img):
         # ambil beberapa kontur besar, bukan hanya max, untuk multi
         cnts=sorted(cnts,key=cv2.contourArea,reverse=True)[:5]
         for c in cnts:
-            if cv2.contourArea(c) < 0.005*h*w: continue
+            if cv2.contourArea(c) < MIN_AREA_RATIO*h*w: continue
             x,y,ww,hh=cv2.boundingRect(c)
             rect=(max(0,x-2),max(0,y-2),min(w,ww+4),min(h,hh+4))
             mask=np.zeros((h,w),np.uint8)
@@ -134,7 +148,7 @@ def _grabcut_multi(bgr_img):
                 # pisahkan kontur lagi untuk multi
                 cnts2,_=cv2.findContours(mask_fg,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
                 for c2 in cnts2:
-                    if cv2.contourArea(c2) < 0.005*h*w: continue
+                    if cv2.contourArea(c2) < MIN_AREA_RATIO*h*w: continue
                     x2,y2,w2,h2=cv2.boundingRect(c2)
                     m=np.zeros_like(mask_fg)
                     cv2.drawContours(m,[c2],-1,255,-1)
@@ -153,7 +167,7 @@ def _grabcut_multi(bgr_img):
                 xi1=max(x1,x2); yi1=max(y1,y2); xi2=min(x1+w1,x2+w2); yi2=min(y1+h1,y2+h2)
                 inter=max(0,xi2-xi1)*max(0,yi2-yi1)
                 union=w1*h1+w2*h2-inter
-                if union and inter/union>0.5:
+                if union and inter/union>IOU_NMS_THRESHOLD:
                     dup=True; break
             if not dup: filtered.append((m,b,c))
         filtered=filtered[:5]
@@ -187,8 +201,8 @@ def _grabcut_multi(bgr_img):
                         cv2.drawContours(m2,[c],-1,255,-1)
                         # Jika merged aspect ratio lebih masuk akal untuk terong lanskap (~2.5) daripada individu terpecah
                         ar_merge = max(w2/h2, h2/w2) if h2 else 0
-                        # terong lanskap ar 2.5, pir 1.0, apel 1.1 -> merge ar 2.5 lebih Terong
-                        if 1.8 < ar_merge < 3.5:
+                        # terong lanskap ar 2.5, pir 1.0, apel 1.1 -> merge ar dalam MERGE_AR_RANGE lebih Terong
+                        if MERGE_AR_RANGE[0] < ar_merge < MERGE_AR_RANGE[1]:
                             return [(m2,(x,y,w2,h2),c)]
         return filtered
     # fallback HSV union semua kelas
@@ -238,7 +252,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
         img=cv2.resize(img_bgr,(500,int(h0*rasio))) if w0 else img_bgr
         return {"img":img,"hsv":cv2.cvtColor(img,cv2.COLOR_BGR2HSV),"gray":cv2.cvtColor(img,cv2.COLOR_BGR2GRAY),"hasil":"Belum ada database - lakukan kalibrasi (isi data_buah/ lalu Kalibrasi Ulang)","fitur":{},"objek_terdeteksi":False,"semua_deteksi":[],"mask_terbaik":None,"bbox":None,"scale_ratio":rasio,"bboxes":[]}
 
-    lebar_target=500
+    lebar_target=RESIZE_WIDTH
     h0,w0=img_bgr.shape[:2]
     rasio=lebar_target/float(w0)
     tinggi_target=int(h0*rasio)
@@ -246,7 +260,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
     hsv=cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
     gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     total_piksel=img.shape[0]*img.shape[1]
-    min_area_threshold=0.005*total_piksel
+    min_area_threshold=MIN_AREA_RATIO*total_piksel
 
     # Multi-mask via GrabCut
     multi_masks=_grabcut_multi(img)
@@ -266,13 +280,13 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
                 best_d=float('inf'); best_detail=None
                 if templates:
                     for tpl in templates:
-                        # Bobot warna ditingkatkan untuk terong gelap V70 vs pisang terang V150
-                        d_h=_chi2(qfeat["hist_h"], tpl["hist_h"])*0.5 + _chi2(qfeat["hist_s"], tpl["hist_s"])*0.3 + _chi2(qfeat["hist_l"], tpl["hist_l"])*0.2
-                        d_hu=_hu_distance(qfeat["hu"], tpl["hu"])*0.05
+                        wH, wS, wL = HIST_WEIGHTS
+                        d_h=_chi2(qfeat["hist_h"], tpl["hist_h"])*wH + _chi2(qfeat["hist_s"], tpl["hist_s"])*wS + _chi2(qfeat["hist_l"], tpl["hist_l"])*wL
+                        d_hu=_hu_distance(qfeat["hu"], tpl["hu"])*HU_WEIGHT
                         # shape gauss
                         d_circ=abs(qfeat["circ"]-tpl.get("circ",0.5))/0.25
                         d_ar=abs(qfeat["ar"]-tpl.get("ar",1.5))/0.6
-                        d=d_h + d_hu + (d_circ+d_ar)*0.08
+                        d=d_h + d_hu + (d_circ+d_ar)*SHAPE_WEIGHT
                         if d < best_d:
                             best_d=d
                             best_detail={"d_h":d_h,"d_hu":d_hu}
@@ -285,10 +299,8 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
                         best_d= -math.log(max(prob,1e-6))
                         best_detail={}
                     else: continue
-                # convert distance ke prob 0-1 via exp
-                prob = math.exp(-best_d)
-                # clamp
-                prob = max(0, min(1, prob))
+                # convert distance ke prob 0-1 via helper konsisten
+                prob = _dist_to_prob(best_d)
                 per_class.append((nama_buah, prob, best_d, best_detail, qfeat["circ"], qfeat["ar"], qfeat["kontr"], bbox, mask_fg))
             if not per_class: continue
             per_class.sort(key=lambda x: x[1], reverse=True)
@@ -304,7 +316,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
         if bboxes:
             # hasil utama = objek dengan prob tertinggi
             best_box=max(bboxes, key=lambda b: b["prob"])
-            if best_box["prob"] < 0.15:
+            if best_box["prob"] < DETECTION_THRESHOLD:
                 hasil_identifikasi=f"Tidak ada buah terdeteksi (tertinggi {best_box['label']} {best_box['prob']*100:.1f}%)"
                 mask_terbaik=None; bbox_terbaik=None; data_fitur_terbaik={}
             else:
@@ -339,10 +351,11 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
                         # hitung query hist untuk mask ini
                         qfeat=_compute_query_features(img,mask)
                         best_d=float('inf')
+                        wH, wS, wL = HIST_WEIGHTS
                         for tpl in templates:
-                            d=_chi2(qfeat["hist_h"],tpl["hist_h"])*0.5+_chi2(qfeat["hist_s"],tpl["hist_s"])*0.3+_chi2(qfeat["hist_l"],tpl["hist_l"])*0.2
+                            d=_chi2(qfeat["hist_h"],tpl["hist_h"])*wH+_chi2(qfeat["hist_s"],tpl["hist_s"])*wS+_chi2(qfeat["hist_l"],tpl["hist_l"])*wL
                             if d<best_d: best_d=d
-                        prob=math.exp(-best_d*0.7)
+                        prob=_dist_to_prob(best_d)
                     else:
                         stats=data.get("stats")
                         if stats: prob,detail=_hitung_probabilitas(fitur,stats)
@@ -356,7 +369,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
         for d in semua_deteksi[:3]:
             bboxes.append({"x":int(d["bbox"][0]),"y":int(d["bbox"][1]),"w":int(d["bbox"][2]),"h":int(d["bbox"][3]),"label":d["nama_buah"],"prob":float(d["probabilitas"])})
         top=semua_deteksi[0]; prob=top["probabilitas"]
-        if prob<0.15:
+        if prob<DETECTION_THRESHOLD:
             hasil_identifikasi=f"Tidak ada buah terdeteksi (tertinggi {top['nama_buah']} {prob*100:.1f}%)"
             mask_terbaik=None; bbox_terbaik=None; data_fitur_terbaik={}
         else:
