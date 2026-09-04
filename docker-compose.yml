@@ -6,8 +6,6 @@ services:
     volumes:
       - ./data_buah:/app/data_buah
       - ./output:/app/output
-      - ./app/database.json:/app/app/database.json
-      - ./database.json:/app/database.json
     environment:
       - PORT=5000
     restart: unless-stopped
