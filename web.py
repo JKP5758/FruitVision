@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)
 
 # --- watchdog auto kalibrasi ---
-WATCHDOG_ENABLED = True
+WATCHDOG_ENABLED = False
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
@@ -78,6 +78,7 @@ if not (WATCHDOG_AVAILABLE and WATCHDOG_ENABLED):
     def poller():
         last_mtime = 0
         last_count = -1
+        last_dir_count = -1
         while True:
             time.sleep(10)
             try:
@@ -92,9 +93,10 @@ if not (WATCHDOG_AVAILABLE and WATCHDOG_ENABLED):
                         except: pass
                 # hitung folder count juga untuk deteksi hapus folder
                 dir_count = len([d for d in os.listdir("data_buah") if os.path.isdir(os.path.join("data_buah", d))]) if os.path.exists("data_buah") else 0
-                if mtime > last_mtime or count != last_count or dir_count != last_count:
+                if mtime > last_mtime or count != last_count or dir_count != last_dir_count:
                     last_mtime = mtime
                     last_count = count
+                    last_dir_count = dir_count
                     run_kalibrasi(reset=True)
             except: pass
     threading.Thread(target=poller, daemon=True).start()
