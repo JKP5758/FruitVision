@@ -7,17 +7,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.detector import (
     get_database, identifikasi_buah, identifikasi_frame,
-    scan_data_buah, DEFAULT_DATABASE
+    scan_data_buah
 )
 
-# expose DATABASE_BUAH untuk kalibrasi lama
+# expose DATABASE_BUAH untuk kalibrasi lama (dinamis, bisa kosong sebelum kalibrasi)
 DATABASE_BUAH = get_database()
-LABEL_GROUND_TRUTH = {
-    "a1.png": "Apel (Merah)",
-    "d1.png": "Durian",
-    "j1.png": "Jeruk",
-    "p1.png": "Pisang (Kuning/Hijau)",
-}
+LABEL_GROUND_TRUTH = {}  # dinamis — tidak hard-code, gunakan scan_data_buah
 
 def evaluasi_semua(headless=True, save_dir="output", data_root=None):
     db = get_database()

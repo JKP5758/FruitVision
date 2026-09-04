@@ -137,6 +137,7 @@ async function captureAndPredict(){
   const r=await fetch('/predict',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image:b64})});
   const j=await r.json();
   const dt=(performance.now()-t0).toFixed(0);
+  window.lastBboxes = j.bboxes || (j.bbox ? [Object.assign({}, j.bbox, {label: j.hasil.split(' ')[0], prob: j.semua_deteksi?.[0]?.probabilitas})] : []);
   renderResult(j, dt);
   drawBox(j.bbox);
 }
@@ -154,18 +155,29 @@ async function captureOnce(){
 
 function drawBox(bbox){
   octx.clearRect(0,0,overlay.width,overlay.height);
-  if(!bbox) return;
-  // bbox dari detector relatif ke 500px width, scale ke overlay size
+  // dukung multi-bbox
+  let boxes = [];
+  if (Array.isArray(window.lastBboxes) && window.lastBboxes.length) boxes = window.lastBboxes;
+  else if(bbox) boxes = [bbox];
+  if(!boxes.length) return;
   const scaleX=overlay.width/500;
-  // tinggi overlay = width * (videoHeight/videoWidth) ≈ tapi kita scale Y juga dengan scaleX karena detector preserve aspect dari 500 width
-  // Sederhana: scale sama
-  const x=bbox.x*scaleX, y=bbox.y*scaleX, w=bbox.w*scaleX, h=bbox.h*scaleX;
-  octx.strokeStyle='#22c55e'; octx.lineWidth=3; octx.strokeRect(x,y,w,h);
-  octx.fillStyle='#22c55e'; octx.font='14px system-ui'; octx.fillText(document.getElementById('hasil').textContent, x, Math.max(12,y-6));
+  const colors=['#22c55e','#3b82f6','#eab308','#ef4444','#a855f7','#06b6d4','#f97316','#84cc16'];
+  boxes.forEach((b,i)=>{
+    const x=b.x*scaleX, y=b.y*scaleX, w=b.w*scaleX, h=b.h*scaleX;
+    const col=colors[i%colors.length];
+    octx.strokeStyle=col; octx.lineWidth=3; octx.strokeRect(x,y,w,h);
+    octx.fillStyle=col; octx.font='12px system-ui';
+    const lbl = b.label ? `${b.label} ${b.prob}%` : document.getElementById('hasil').textContent;
+    octx.fillText(lbl, x, Math.max(12,y-6));
+  });
 }
 
 function renderResult(j, dt){
   document.getElementById('hasil').textContent = j.hasil || j.error || '—';
+  // tampilkan multi-bbox ringkas
+  if(j.bboxes && j.bboxes.length>1){
+    document.getElementById('hasil').textContent += ` [${j.bboxes.length} buah]`;
+  }
   document.getElementById('latency').textContent = j.latency_ms ? `latency ${j.latency_ms} ms (total ${dt} ms)` : '';
   const kv=document.getElementById('kv');
   if(j.fitur && Object.keys(j.fitur).length){

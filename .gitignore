@@ -15,3 +15,5 @@ config.yml
 # tapi keep data_buah structure (ignore isinya optional)
 # data_buah/*/*.jpg
 # data_buah/*/*.png
+# sample - jangan commit (foto mentah 8.5MB)
+sample/

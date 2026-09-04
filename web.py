@@ -37,11 +37,11 @@ def run_kalibrasi(reset=True):
                             os.remove(p)
                             print(f"[RESET] {p} dihapus")
                     except: pass
-            args = [sys.executable, "kalibrasi.py", "--data", "data_buah"]
+            args = [sys.executable, "kalibrasi.py", "--data", "data_buah", "--aug", "2"]
             if reset:
                 args.append("--reset")
             res = subprocess.run(args,
-                                 capture_output=True, text=True, timeout=30)
+                                 capture_output=True, text=True, timeout=90)
             print(res.stdout[-1000:])
             if res.stderr:
                 print("[AUTO ERR]", res.stderr[-500:])
@@ -74,7 +74,7 @@ if WATCHDOG_AVAILABLE and WATCHDOG_ENABLED:
         WATCHDOG_AVAILABLE = False
 
 # fallback polling tiap 10s jika watchdog tidak tersedia
-if not WATCHDOG_AVAILABLE:
+if not (WATCHDOG_AVAILABLE and WATCHDOG_ENABLED):
     def poller():
         last_mtime = 0
         last_count = -1
@@ -150,12 +150,14 @@ def predict():
         latency = (time.time() - start) * 1000
 
         bbox = res.get("bbox")
+        bboxes = res.get("bboxes", [])
         # normalisasi bbox ke koordinat asli frame (karena detector resize ke 500)
         # detector sudah resize internal, tapi bbox relatif terhadap resized 500, kita kirim apa adanya
         # frontend akan scale sesuai video size
         return jsonify({
             "hasil": res["hasil"],
             "bbox": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])} if bbox else None,
+            "bboxes": [{"x": int(b["x"]), "y": int(b["y"]), "w": int(b["w"]), "h": int(b["h"]), "label": b["label"], "prob": round(b["prob"]*100,1)} for b in bboxes],
             "fitur": res.get("fitur", {}),
             "objek_terdeteksi": res.get("objek_terdeteksi", False),
             "latency_ms": round(latency, 1),
@@ -183,20 +185,29 @@ def upload():
     start = time.time()
     res = identifikasi_frame(frame, verbose=False)
     latency = (time.time() - start) * 1000
-    bbox = res.get("bbox")
+    bboxes = res.get("bboxes", [])
     # untuk upload kita juga simpan bbox image sebagai base64 untuk ditampilkan
     # encode bbox image
     bbox_b64 = None
-    if bbox and res.get("img") is not None:
+    if bboxes and res.get("img") is not None:
         img_kotak = res["img"].copy()
-        x,y,w,h = bbox
+        for b in bboxes:
+            x,y,w,h = b["x"], b["y"], b["w"], b["h"]
+            cv2.rectangle(img_kotak, (x,y), (x+w, y+h), (0,255,0), 2)
+            cv2.putText(img_kotak, f"{b['label']} {b['prob']*100:.0f}%", (x, max(15, y-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+        _, buf = cv2.imencode(".jpg", img_kotak)
+        bbox_b64 = base64.b64encode(buf).decode()
+    elif res.get("bbox") and res.get("img") is not None:
+        img_kotak = res["img"].copy()
+        x,y,w,h = res["bbox"]
         cv2.rectangle(img_kotak, (x,y), (x+w, y+h), (0,255,0), 2)
         cv2.putText(img_kotak, res["hasil"], (x, max(15, y-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
         _, buf = cv2.imencode(".jpg", img_kotak)
         bbox_b64 = base64.b64encode(buf).decode()
     return jsonify({
         "hasil": res["hasil"],
-        "bbox": {"x": int(bbox[0]), "y": int(bbox[1]), "w": int(bbox[2]), "h": int(bbox[3])} if bbox else None,
+        "bbox": {"x": int(res["bbox"][0]), "y": int(res["bbox"][1]), "w": int(res["bbox"][2]), "h": int(res["bbox"][3])} if res.get("bbox") else None,
+        "bboxes": [{"x": int(b["x"]), "y": int(b["y"]), "w": int(b["w"]), "h": int(b["h"]), "label": b["label"], "prob": round(b["prob"]*100,1)} for b in bboxes],
         "bbox_image": bbox_b64,
         "fitur": res.get("fitur", {}),
         "probabilitas": res.get("semua_deteksi", [{}])[0].get("probabilitas",0) if res.get("semua_deteksi") else 0,
@@ -205,15 +216,24 @@ def upload():
     })
 
 if __name__ == "__main__":
-    # ensure data_buah ada (fleksibel, jangan hard-code 4 folder)
+    # ensure data_buah ada (dinamis, tidak hard-code)
     os.makedirs("data_buah", exist_ok=True)
-    # reset kalibrasi saat start untuk hapus ghost class
-    print("[STARTUP] Reset & kalibrasi awal...")
-    run_kalibrasi(reset=True)
-    # buat folder contoh jika kosong (tidak hard-code jeruk/durian)
-    if not os.listdir("data_buah"):
-        os.makedirs("data_buah/apel", exist_ok=True)
-        os.makedirs("data_buah/pisang", exist_ok=True)
+    # jika database sudah ada dan valid (multi-template), jangan reset otomatis (hemat) - cek kedua lokasi
+    has_templates = False
+    for _p in ["database.json", "app/database.json"]:
+        if os.path.exists(_p) and os.path.getsize(_p) > 1000:
+            try:
+                import json as _js
+                with open(_p,"r") as f: _d=_js.load(f)
+                if any("templates" in v for v in _d.values()):
+                    has_templates = True
+                    break
+            except: pass
+    if has_templates:
+        print("[STARTUP] Database multi-template sudah ada, skip kalibrasi awal")
+    else:
+        print("[STARTUP] Reset & kalibrasi awal...")
+        run_kalibrasi(reset=True)
     port = int(os.environ.get("PORT", 5000))
     print(f"[WEB] http://localhost:{port} — classes: {list(get_database().keys())}")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
