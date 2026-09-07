@@ -17,3 +17,6 @@ config.yml
 # data_buah/*/*.png
 # sample - jangan commit (foto mentah 8.5MB)
 sample/
+# arsip compress data_buah - jangan commit
+data_buah_*.zip
+*.zip

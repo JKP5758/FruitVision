@@ -18,12 +18,64 @@ try:
     HAS_ALBU = True
 except: HAS_ALBU = False
 
-def grabcut_foreground(bgr_img):
-    """GrabCut presisi untuk berbagai background. Fallback ke Otsu jika gagal."""
+def load_bgr_with_alpha(path):
+    """Load gambar: jika 4ch BGRA, pisah BGR + alpha mask; jika 3ch, alpha=None"""
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        return None, None
+    if len(img.shape) == 3 and img.shape[2] == 4:
+        bgr = img[:, :, :3]
+        alpha = img[:, :, 3]
+        # alpha 0=transparan background, 255=buah; cek valid (tidak semua opaque/transparan)
+        unique = len(set(alpha.flatten().tolist()[::1000]))
+        if 0 < cv2.countNonZero(alpha) < alpha.size * 0.99:
+            return bgr, alpha
+        # jika semua opaque anggap tanpa alpha
+        return bgr, None
+    # 3ch
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        return img, None
+    # grayscale
+    return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR), None
+
+def grabcut_foreground(bgr_img, alpha_mask=None):
+    """GrabCut presisi untuk berbagai background. Jika alpha_mask ada (PNG transparan), langsung pakai."""
     h,w = bgr_img.shape[:2]
-    # init rect dari Otsu bbox
+    # Jalan pintas ideal: PNG tanpa background punya alpha sempurna
+    if alpha_mask is not None:
+        # bersihkan alpha
+        _, th_alpha = cv2.threshold(alpha_mask, 127, 255, cv2.THRESH_BINARY)
+        kernel = np.ones((5,5), np.uint8)
+        th_alpha = cv2.morphologyEx(th_alpha, cv2.MORPH_CLOSE, kernel)
+        th_alpha = cv2.morphologyEx(th_alpha, cv2.MORPH_OPEN, kernel)
+        if 0.005*h*w < cv2.countNonZero(th_alpha) < 0.95*h*w:
+            cnts,_ = cv2.findContours(th_alpha, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if cnts:
+                c = max(cnts, key=cv2.contourArea)
+                if cv2.contourArea(c) >= 0.005*h*w:
+                    mask_fg = np.zeros_like(th_alpha)
+                    cv2.drawContours(mask_fg,[c],-1,255,-1)
+                    # GrabCut refine 1 iter dengan GC_INIT_WITH_MASK untuk haluskan tepi
+                    try:
+                        gc_mask = np.where(mask_fg==255, cv2.GC_FGD, cv2.GC_BGD).astype(np.uint8)
+                        bgd = np.zeros((1,65), np.float64); fgd = np.zeros((1,65), np.float64)
+                        cv2.grabCut(bgr_img, gc_mask, None, bgd, fgd, 1, cv2.GC_INIT_WITH_MASK)
+                        mask_refined = np.where((gc_mask==cv2.GC_FGD)|(gc_mask==cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+                        if cv2.countNonZero(mask_refined) > 0.005*h*w:
+                            mask_fg = cv2.morphologyEx(mask_refined, cv2.MORPH_CLOSE, kernel)
+                    except: pass
+                    x,y,ww,hh = cv2.boundingRect(c)
+                    return mask_fg, (x,y,ww,hh,c)
+    # init rect dari Otsu + CLAHE untuk JPG berlatar
     gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
-    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    # CLAHE untuk tahan lighting lantai/meja
+    try:
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        gray_eq = clahe.apply(gray)
+    except:
+        gray_eq = gray
+    gray_blur = cv2.GaussianBlur(gray_eq, (5,5), 0)
+    _, th = cv2.threshold(gray_blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
     # coba kedua invert
     for cand_th in [cv2.bitwise_not(th), th]:
         # bersihkan
@@ -108,17 +160,28 @@ def compute_hist_features(bgr_img, mask_fg):
     mean_hsv = np.mean(hsv_pixels,axis=0).tolist() if len(hsv_pixels) else [0,0,0]
     return {"hist_h":hist_h,"hist_s":hist_s,"hist_l":hist_l,"hu":hu,"circ":float(circ),"ar":float(ar),"kontr":float(kontr),"mean_hsv":mean_hsv,"bbox":bbox}
 
-def augment_image(bgr_img, n=4):
+def augment_image(bgr_img, n=4, is_bg_sample=False):
     if not HAS_ALBU: return []
     h,w = bgr_img.shape[:2]
-    # jangan augment terlalu ekstrim untuk buah
-    transform = A.Compose([
-        A.HorizontalFlip(p=0.5),
-        A.Rotate(limit=25, p=0.8, border_mode=cv2.BORDER_REFLECT_101),
-        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.7),
-        A.HueSaturationValue(hue_shift_limit=8, sat_shift_limit=15, val_shift_limit=15, p=0.7),
-        A.Perspective(scale=(0.02,0.05), p=0.3),
-    ])
+    # augment lebih agresif untuk sample berlatar agar tahan lantai/meja/shadow
+    if is_bg_sample:
+        transform = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.Rotate(limit=30, p=0.8, border_mode=cv2.BORDER_REFLECT_101),
+            A.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25, p=0.8),
+            A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=20, p=0.8),
+            A.Perspective(scale=(0.02,0.05), p=0.3),
+            A.CLAHE(clip_limit=2.0, p=0.4),
+            A.RandomShadow(shadow_roi=(0,0.5,1,1), num_shadows_lower=1, num_shadows_upper=2, shadow_dimension=3, p=0.3),
+        ])
+    else:
+        transform = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.Rotate(limit=25, p=0.8, border_mode=cv2.BORDER_REFLECT_101),
+            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.7),
+            A.HueSaturationValue(hue_shift_limit=8, sat_shift_limit=15, val_shift_limit=15, p=0.7),
+            A.Perspective(scale=(0.02,0.05), p=0.3),
+        ])
     out=[]
     for _ in range(n):
         try:
@@ -135,7 +198,11 @@ def build_hsv_ranges(hsv_vals):
     std[0]=max(min(std[0],15.),5.)
     std[1]=max(min(std[1],30.),15.)
     std[2]=max(min(std[2],30.),15.)
-    lo=mean-2*std; hi=mean+2*std
+    # untuk data campuran clean+berlatar, lebarkan ke 2.8std untuk fix (tahan variasi Pir/Jambu)
+    is_mixed = len(arr) >= 4 and np.std(arr[:,0]) > 12
+    # jika ada fix (kelas yang baru ditambah), lebarkan lebih
+    k = 2.8 if is_mixed else 2.0
+    lo=mean-k*std; hi=mean+k*std
     lo=np.maximum(lo,[0,0,0]); hi=np.minimum(hi,[180,255,255])
     lo=lo.astype(int); hi=hi.astype(int)
     if lo[0]<=5 and hi[0]>=175:
@@ -173,12 +240,20 @@ def main():
         print(f"\n=== {label} : {n} gambar ===")
         if n<5: print(f"  [INFO] n={n} (<5 saran, tetap diproses + augment x{args.aug})")
         for p in sorted(paths):
-            img=cv2.imread(p)
-            if img is None: continue
-            img=cv2.resize(img,(500,int(img.shape[0]*500/img.shape[1])))
+            bgr_orig, alpha_orig = load_bgr_with_alpha(p)
+            if bgr_orig is None: continue
+            # resize BGR dan alpha konsisten
+            h0,w0 = bgr_orig.shape[:2]
+            new_h = int(h0*500/w0)
+            bgr_resized = cv2.resize(bgr_orig,(500,new_h))
+            alpha_resized = cv2.resize(alpha_orig,(500,new_h)) if alpha_orig is not None else None
+            is_bg_sample = "_sample" in os.path.basename(p) or alpha_orig is None
+            img = bgr_resized
             # original
-            for aug_idx, bgr in enumerate([img]+augment_image(img, args.aug if n<5 else 2)):
-                mask,info=grabcut_foreground(bgr)
+            for aug_idx, bgr in enumerate([img]+augment_image(img, args.aug if n<5 else 2, is_bg_sample=is_bg_sample)):
+                # untuk aug, alpha tidak dipakai (biar augment background ikut terlatih)
+                a_for_grab = alpha_resized if aug_idx==0 else None
+                mask,info=grabcut_foreground(bgr, alpha_mask=a_for_grab)
                 if mask is None: 
                     if aug_idx==0: print(f"  {os.path.basename(p):25} GAGAL grabcut")
                     continue

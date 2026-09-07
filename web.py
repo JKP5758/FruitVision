@@ -158,12 +158,13 @@ def predict():
             b64 = b64.split(",", 1)[1]
         img_bytes = base64.b64decode(b64)
         nparr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
         if frame is None:
             return jsonify({"error": "decode failed"}), 400
 
+        is_live = request.headers.get("X-Live") == "1"
         start = time.time()
-        res = identifikasi_frame(frame, verbose=False)
+        res = identifikasi_frame(frame, verbose=False, fast_live=is_live)
         latency = (time.time() - start) * 1000
 
         bbox = res.get("bbox")
@@ -196,7 +197,7 @@ def upload():
     if file.filename == "":
         return jsonify({"error": "empty filename"}), 400
     nparr = np.frombuffer(file.read(), np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
     if frame is None:
         return jsonify({"error": "decode failed"}), 400
     start = time.time()

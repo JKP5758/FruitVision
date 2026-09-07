@@ -10,12 +10,12 @@ LABEL_MAP = {}
 # === Konstanta global (disepakati 15% threshold) ===
 DETECTION_THRESHOLD = 0.15  # prob < 0.15 -> Tidak ada buah terdeteksi (sinkron README)
 RESIZE_WIDTH = 500
-MIN_AREA_RATIO = 0.005
-IOU_NMS_THRESHOLD = 0.5
+MIN_AREA_RATIO = 0.008  # tuning: 0.008 agar tepi buah tidak terpotong, tetap filter lantai kecil
+IOU_NMS_THRESHOLD = 0.45
 MERGE_AR_RANGE = (1.8, 3.5)
-HIST_WEIGHTS = (0.5, 0.3, 0.2)  # H, S, L
-HU_WEIGHT = 0.05
-SHAPE_WEIGHT = 0.08
+HIST_WEIGHTS = (0.45, 0.28, 0.18)  # moderat: shape sedikit dominan tanpa overfit
+HU_WEIGHT = 0.06
+SHAPE_WEIGHT = 0.10
 
 def _dist_to_prob(dist, scale=1.0):
     """Konversi chi2/Hu distance -> probabilitas 0-1 konsisten."""
@@ -85,7 +85,16 @@ def hitung_tekstur_glcm(gray_img, x, y, w, h, mask=None):
     roi_gray = gray_img[y:y+h, x:x+w]
     if roi_gray.size == 0:
         return 0, 0
-    _ = mask
+    # jika mask ada, mask background jadi mean agar tidak ganggu GLCM
+    if mask is not None:
+        try:
+            roi_mask = mask[y:y+h, x:x+w]
+            if roi_mask.shape == roi_gray.shape:
+                mean_val = int(np.mean(roi_gray[roi_mask>0])) if cv2.countNonZero(roi_mask) else 0
+                roi_gray = roi_gray.copy()
+                roi_gray[roi_mask==0] = mean_val
+        except:
+            pass
     max_side = 150
     if max(roi_gray.shape) > max_side:
         scale = max_side / max(roi_gray.shape)
@@ -119,12 +128,80 @@ def _chi2(h1, h2):
 def _hu_distance(hu1, hu2):
     return np.linalg.norm(np.array(hu1)-np.array(hu2))
 
-def _grabcut_multi(bgr_img):
+def _try_alpha_mask(bgr_img, alpha_mask):
+    """Jika PNG 4ch dengan alpha, buat mask langsung."""
+    if alpha_mask is None:
+        return None
+    h,w = bgr_img.shape[:2]
+    _, th_alpha = cv2.threshold(alpha_mask, 127, 255, cv2.THRESH_BINARY)
+    kernel = np.ones((5,5), np.uint8)
+    th_alpha = cv2.morphologyEx(th_alpha, cv2.MORPH_CLOSE, kernel)
+    th_alpha = cv2.morphologyEx(th_alpha, cv2.MORPH_OPEN, kernel)
+    if 0.005*h*w < cv2.countNonZero(th_alpha) < 0.95*h*w:
+        cnts,_ = cv2.findContours(th_alpha, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if cnts:
+            c = max(cnts, key=cv2.contourArea)
+            mask_fg = np.zeros_like(th_alpha)
+            cv2.drawContours(mask_fg,[c],-1,255,-1)
+            x,y,ww,hh = cv2.boundingRect(c)
+            return mask_fg, (x,y,ww,hh), c
+    return None
+
+def _rembg_mask(bgr_img):
+    """Opsional rembg (u2net) untuk foto berlatar — fallback jika grabcut gagal. Return mask atau None."""
+    try:
+        from rembg import remove
+        import io
+        from PIL import Image
+        # encode bgr to png bytes
+        _, buf = cv2.imencode(".png", bgr_img)
+        out = remove(buf.tobytes())
+        # out adalah png dengan alpha
+        nparr = np.frombuffer(out, np.uint8)
+        img_rgba = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+        if img_rgba is not None and img_rgba.shape[2] == 4:
+            alpha = img_rgba[:,:,3]
+            _, th = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
+            kernel = np.ones((5,5), np.uint8)
+            th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, kernel)
+            if 0.005*bgr_img.shape[0]*bgr_img.shape[1] < cv2.countNonZero(th) < 0.95*bgr_img.shape[0]*bgr_img.shape[1]:
+                cnts,_ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if cnts:
+                    c = max(cnts, key=cv2.contourArea)
+                    mask_fg = np.zeros_like(th)
+                    cv2.drawContours(mask_fg,[c],-1,255,-1)
+                    x,y,ww,hh = cv2.boundingRect(c)
+                    return mask_fg, (x,y,ww,hh), c
+    except Exception:
+        pass
+    return None
+
+def _grabcut_multi(bgr_img, alpha_mask=None, fast_live=False):
     """Return list of (mask, bbox, contour) untuk multi-buah via GrabCut + fallback HSV."""
     h,w=bgr_img.shape[:2]
-    # Coba GrabCut
+    # Prioritas 1: alpha mask PNG transparan
+    if alpha_mask is not None:
+        res = _try_alpha_mask(bgr_img, alpha_mask)
+        if res:
+            mf,b,c = res
+            return [(mf,b,c)]
+    # Coba rembg untuk foto berlatar — skip untuk live cepat (fast_live=True)
+    if not fast_live:
+        rb = _rembg_mask(bgr_img)
+        if rb is not None:
+            mf,b,c = rb
+            # validasi tidak terlalu kecil/besar
+            if 0.005*h*w < cv2.contourArea(c) < 0.9*h*w:
+                return [(mf,b,c)]
+    # Coba GrabCut dengan CLAHE untuk tahan lantai/meja
     gray=cv2.cvtColor(bgr_img,cv2.COLOR_BGR2GRAY)
-    _, th=cv2.threshold(gray,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    try:
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        gray_eq = clahe.apply(gray)
+    except:
+        gray_eq = gray
+    gray_blur = cv2.GaussianBlur(gray_eq, (5,5), 0)
+    _, th=cv2.threshold(gray_blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
     masks=[]
     for cand_th in [cv2.bitwise_not(th), th]:
         kernel=np.ones((5,5),np.uint8)
@@ -136,12 +213,17 @@ def _grabcut_multi(bgr_img):
         cnts=sorted(cnts,key=cv2.contourArea,reverse=True)[:5]
         for c in cnts:
             if cv2.contourArea(c) < MIN_AREA_RATIO*h*w: continue
-            x,y,ww,hh=cv2.boundingRect(c)
-            rect=(max(0,x-2),max(0,y-2),min(w,ww+4),min(h,hh+4))
+            # bbox presisi: approxPolyDP 1% untuk snap tepi
+            peri0 = cv2.arcLength(c, True)
+            c_ap = cv2.approxPolyDP(c, 0.01*peri0, True) if peri0 > 0 else c
+            x,y,ww,hh=cv2.boundingRect(c_ap)
+            pad = 1 if fast_live else 2
+            rect=(max(0,x-pad),max(0,y-pad),min(w,ww+pad*2),min(h,hh+pad*2))
             mask=np.zeros((h,w),np.uint8)
             bgd=np.zeros((1,65),np.float64); fgd=np.zeros((1,65),np.float64)
             try:
-                cv2.grabCut(bgr_img,mask,rect,bgd,fgd,3,cv2.GC_INIT_WITH_RECT)
+                iters = 1 if fast_live else 3
+                cv2.grabCut(bgr_img,mask,rect,bgd,fgd,iters,cv2.GC_INIT_WITH_RECT)
                 mask_fg=np.where((mask==1)|(mask==3),255,0).astype(np.uint8)
                 mask_fg=cv2.morphologyEx(mask_fg,cv2.MORPH_OPEN,kernel)
                 mask_fg=cv2.morphologyEx(mask_fg,cv2.MORPH_CLOSE,kernel)
@@ -149,9 +231,13 @@ def _grabcut_multi(bgr_img):
                 cnts2,_=cv2.findContours(mask_fg,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
                 for c2 in cnts2:
                     if cv2.contourArea(c2) < MIN_AREA_RATIO*h*w: continue
-                    x2,y2,w2,h2=cv2.boundingRect(c2)
+                    # presisi bbox via approx
+                    peri2 = cv2.arcLength(c2, True)
+                    c2_ap = cv2.approxPolyDP(c2, 0.01*peri2, True) if peri2>0 else c2
+                    x2,y2,w2,h2=cv2.boundingRect(c2_ap)
                     m=np.zeros_like(mask_fg)
                     cv2.drawContours(m,[c2],-1,255,-1)
+                    # use tight bbox for presisi
                     masks.append((m,(x2,y2,w2,h2),c2))
             except: pass
         if masks: break
@@ -208,7 +294,7 @@ def _grabcut_multi(bgr_img):
     # fallback HSV union semua kelas
     return []
 
-def _compute_query_features(bgr_img, mask_fg):
+def _compute_query_features(bgr_img, mask_fg, fast=False):
     hsv=cv2.cvtColor(bgr_img,cv2.COLOR_BGR2HSV)
     lab=cv2.cvtColor(bgr_img,cv2.COLOR_BGR2LAB)
     hist_h=cv2.calcHist([hsv],[0],mask_fg,[32],[0,180]); hist_h=cv2.normalize(hist_h,hist_h).flatten()
@@ -224,10 +310,16 @@ def _compute_query_features(bgr_img, mask_fg):
     if c is not None:
         area=cv2.contourArea(c); peri=cv2.arcLength(c,True)
         circ=(4*math.pi*area)/(peri**2) if peri else 0
-        x,y,w,h=cv2.boundingRect(c); ar=max(w/h,h/w) if h else 0
-        gray=cv2.cvtColor(bgr_img,cv2.COLOR_BGR2GRAY)
-        kontr,_=hitung_tekstur_glcm(gray,x,y,w,h,mask_fg)
-        bbox=(x,y,w,h)
+        # bbox presisi via approx
+        c_ap = cv2.approxPolyDP(c, 0.01*peri, True) if peri>0 else c
+        x,y,w,h=cv2.boundingRect(c_ap); ar=max(w/h,h/w) if h else 0
+        if fast:
+            kontr=0
+            bbox=(x,y,w,h)
+        else:
+            gray=cv2.cvtColor(bgr_img,cv2.COLOR_BGR2GRAY)
+            kontr,_=hitung_tekstur_glcm(gray,x,y,w,h,mask_fg)
+            bbox=(x,y,w,h)
     return {"hist_h":hist_h,"hist_s":hist_s,"hist_l":hist_l,"hu":hu,"circ":circ,"ar":ar,"kontr":kontr,"bbox":bbox,"mask":mask_fg}
 
 def _hitung_probabilitas(fitur, stats):
@@ -243,27 +335,49 @@ def _hitung_probabilitas(fitur, stats):
     detail = {"s_circ": s_circ, "s_ar": s_ar, "s_kon": s_kon, "z_circ": zc, "z_ar": za, "z_kon": zk}
     return prob, detail
 
-def _identifikasi_core(img_bgr, database=None, verbose=True):
+def _load_bgr_alpha(bgr_or_path):
+    """Helper: jika input adalah path, load UNCHANGED; jika ndarray 4ch, pisah; return (bgr, alpha_or_None)"""
+    if isinstance(bgr_or_path, str):
+        img = cv2.imread(bgr_or_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            return None, None
+        if len(img.shape)==3 and img.shape[2]==4:
+            return img[:,:,:3], img[:,:,3]
+        return img, None
+    # ndarray
+    img = bgr_or_path
+    if len(img.shape)==3 and img.shape[2]==4:
+        return img[:,:,:3], img[:,:,3]
+    return img, None
+
+def _identifikasi_core(img_bgr, database=None, verbose=True, alpha_mask=None, fast_live=False):
+    # handle 4ch BGRA input
+    if img_bgr is not None and len(img_bgr.shape)==3 and img_bgr.shape[2]==4 and alpha_mask is None:
+        img_bgr, alpha_mask = _load_bgr_alpha(img_bgr)
     if database is None:
         database = get_database()
     if not database:
         h0,w0=img_bgr.shape[:2]
-        rasio=500/float(w0) if w0 else 1
-        img=cv2.resize(img_bgr,(500,int(h0*rasio))) if w0 else img_bgr
+        rasio=RESIZE_WIDTH/float(w0) if w0 else 1
+        img=cv2.resize(img_bgr,(RESIZE_WIDTH,int(h0*rasio))) if w0 else img_bgr
         return {"img":img,"hsv":cv2.cvtColor(img,cv2.COLOR_BGR2HSV),"gray":cv2.cvtColor(img,cv2.COLOR_BGR2GRAY),"hasil":"Belum ada database - lakukan kalibrasi (isi data_buah/ lalu Kalibrasi Ulang)","fitur":{},"objek_terdeteksi":False,"semua_deteksi":[],"mask_terbaik":None,"bbox":None,"scale_ratio":rasio,"bboxes":[]}
 
-    lebar_target=RESIZE_WIDTH
+    # O1 live cepat: resize lebih kecil (320) untuk hemat GrabCut ~2.5x
+    lebar_target=320 if fast_live else RESIZE_WIDTH
     h0,w0=img_bgr.shape[:2]
     rasio=lebar_target/float(w0)
     tinggi_target=int(h0*rasio)
     img=cv2.resize(img_bgr,(lebar_target,tinggi_target))
+    # resize alpha juga jika ada
+    if alpha_mask is not None:
+        alpha_mask = cv2.resize(alpha_mask, (lebar_target, tinggi_target))
     hsv=cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
     gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     total_piksel=img.shape[0]*img.shape[1]
     min_area_threshold=MIN_AREA_RATIO*total_piksel
 
-    # Multi-mask via GrabCut
-    multi_masks=_grabcut_multi(img)
+    # Multi-mask via GrabCut (+ alpha/rembg untuk PNG/berlatar, skip rembg jika fast_live)
+    multi_masks=_grabcut_multi(img, alpha_mask=alpha_mask, fast_live=fast_live)
     # Fallback jika tidak ada mask: pakai HSV per kelas (single)
     semua_deteksi=[]
     bboxes=[]
@@ -272,7 +386,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
     if multi_masks:
         for mask_fg,bbox,cnt in multi_masks:
             if cv2.countNonZero(mask_fg) < min_area_threshold: continue
-            qfeat=_compute_query_features(img, mask_fg)
+            qfeat=_compute_query_features(img, mask_fg, fast=fast_live)
             # bandingkan ke semua templates per kelas
             per_class=[]
             for nama_buah,data in database.items():
@@ -314,11 +428,14 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
         # sort semua_deteksi global
         semua_deteksi.sort(key=lambda d: d["probabilitas"], reverse=True)
         if bboxes:
-            # hasil utama = objek dengan prob tertinggi
+            # SINGLE deteksi: hanya bbox dengan prob tertinggi (sesuai request)
             best_box=max(bboxes, key=lambda b: b["prob"])
+            # sederhanakan bboxes jadi single
+            bboxes_single = [best_box]
             if best_box["prob"] < DETECTION_THRESHOLD:
                 hasil_identifikasi=f"Tidak ada buah terdeteksi (tertinggi {best_box['label']} {best_box['prob']*100:.1f}%)"
                 mask_terbaik=None; bbox_terbaik=None; data_fitur_terbaik={}
+                return {"img":img,"hsv":hsv,"gray":gray,"hasil":hasil_identifikasi,"fitur":data_fitur_terbaik,"objek_terdeteksi":objek_terdeteksi,"semua_deteksi":semua_deteksi,"mask_terbaik":mask_terbaik,"bbox":bbox_terbaik,"scale_ratio":rasio,"bboxes":bboxes_single}
             else:
                 hasil_identifikasi=f"{best_box['label']} ({best_box['prob']*100:.1f}%)"
                 # cari mask terbaik
@@ -328,7 +445,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
                         mask_terbaik=m; break
                 bbox_terbaik=(best_box["x"],best_box["y"],best_box["w"],best_box["h"])
                 data_fitur_terbaik={"Area (px)":float(best_box["w"]*best_box["h"]) ,"Circularity":float(best_box["circ"]),"Aspect Ratio":float(best_box["ar"]),"Kontras":float(best_box["kontr"]),"Probabilitas":float(best_box["prob"])}
-            return {"img":img,"hsv":hsv,"gray":gray,"hasil":hasil_identifikasi,"fitur":data_fitur_terbaik,"objek_terdeteksi":objek_terdeteksi,"semua_deteksi":semua_deteksi,"mask_terbaik":mask_terbaik,"bbox":bbox_terbaik,"scale_ratio":rasio,"bboxes":bboxes}
+            return {"img":img,"hsv":hsv,"gray":gray,"hasil":hasil_identifikasi,"fitur":data_fitur_terbaik,"objek_terdeteksi":objek_terdeteksi,"semua_deteksi":semua_deteksi,"mask_terbaik":mask_terbaik,"bbox":bbox_terbaik,"scale_ratio":rasio,"bboxes":bboxes_single}
     # Fallback single HSV per kelas (jika GrabCut gagal)
     mask_terbaik=None; data_fitur_terbaik={}; bbox_terbaik=None; semua_deteksi=[]
     objek_terdeteksi=False
@@ -349,7 +466,7 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
                     templates=data.get("templates")
                     if templates:
                         # hitung query hist untuk mask ini
-                        qfeat=_compute_query_features(img,mask)
+                        qfeat=_compute_query_features(img,mask, fast=fast_live)
                         best_d=float('inf')
                         wH, wS, wL = HIST_WEIGHTS
                         for tpl in templates:
@@ -365,9 +482,9 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
     semua_deteksi.sort(key=lambda d: d["probabilitas"], reverse=True)
     bboxes=[]
     if semua_deteksi:
-        # kelompokkan per bbox untuk multi (fallback tetap single)
-        for d in semua_deteksi[:3]:
-            bboxes.append({"x":int(d["bbox"][0]),"y":int(d["bbox"][1]),"w":int(d["bbox"][2]),"h":int(d["bbox"][3]),"label":d["nama_buah"],"prob":float(d["probabilitas"])})
+        # SINGLE deteksi fallback: hanya top1 (sesuai request single)
+        d = semua_deteksi[0]
+        bboxes.append({"x":int(d["bbox"][0]),"y":int(d["bbox"][1]),"w":int(d["bbox"][2]),"h":int(d["bbox"][3]),"label":d["nama_buah"],"prob":float(d["probabilitas"])})
         top=semua_deteksi[0]; prob=top["probabilitas"]
         if prob<DETECTION_THRESHOLD:
             hasil_identifikasi=f"Tidak ada buah terdeteksi (tertinggi {top['nama_buah']} {prob*100:.1f}%)"
@@ -380,14 +497,14 @@ def _identifikasi_core(img_bgr, database=None, verbose=True):
         hasil_identifikasi="Tidak ada buah terdeteksi (tidak ada warna cocok)"
     return {"img":img,"hsv":hsv,"gray":gray,"hasil":hasil_identifikasi,"fitur":data_fitur_terbaik,"objek_terdeteksi":objek_terdeteksi,"semua_deteksi":semua_deteksi,"mask_terbaik":mask_terbaik,"bbox":bbox_terbaik,"scale_ratio":rasio,"bboxes":bboxes}
 
-def identifikasi_frame(frame_bgr, verbose=False, database=None):
-    return _identifikasi_core(frame_bgr, database=database, verbose=verbose)
+def identifikasi_frame(frame_bgr, verbose=False, database=None, fast_live=False):
+    return _identifikasi_core(frame_bgr, database=database, verbose=verbose, fast_live=fast_live)
 
 def identifikasi_buah(image_path, verbose=True, headless=False, save_dir="output", database=None):
-    img=cv2.imread(image_path)
-    if img is None:
+    bgr, alpha = _load_bgr_alpha(image_path)
+    if bgr is None:
         return {"image": image_path, "hasil": "Tidak ada buah terdeteksi (file tidak ditemukan)", "error": "file not found"}
-    result=_identifikasi_core(img, database=database, verbose=False)
+    result=_identifikasi_core(bgr, database=database, verbose=False, alpha_mask=alpha)
     if verbose:
         print("\n"+"="*60)
         print(f"MULAI PROSES SCANNING (multi-template): {image_path}")
@@ -397,7 +514,7 @@ def identifikasi_buah(image_path, verbose=True, headless=False, save_dir="output
         print("\n"+"="*60)
         print(f"KESIMPULAN AKHIR: {result['hasil']}")
         if result.get("bboxes"):
-            print(f"Multi bboxes: {result['bboxes']}")
+            print(f"BBox: {result['bboxes']}")
         print("="*60)
         if result["fitur"]:
             for k,v in result["fitur"].items():
@@ -412,8 +529,8 @@ def identifikasi_buah(image_path, verbose=True, headless=False, save_dir="output
             safe_label=result["hasil"].split(" (")[0].replace(" ","_").replace("/","-")
             cv2.imwrite(os.path.join(save_dir,f"{base}_mask_{safe_label}.png"),result["mask_terbaik"])
             img_kotak=result["img"].copy()
-            # gambar semua bboxes
-            for b in result.get("bboxes",[]):
+            # gambar single bbox
+            for b in result.get("bboxes",[])[:1]:
                 x,y,w,h=b["x"],b["y"],b["w"],b["h"]
                 cv2.rectangle(img_kotak,(x,y),(x+w,y+h),(0,255,0),2)
                 cv2.putText(img_kotak,f"{b['label']} {b['prob']*100:.0f}%",(x,max(15,y-10)),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,255,0),1)

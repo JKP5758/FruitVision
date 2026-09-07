@@ -61,7 +61,7 @@ small{color:#94a3b8}
       <div class="kv" id="kv"></div>
       <div id="latency" style="font-size:12px;color:#64748b;margin-top:6px"></div>
     </div>
-    <small>Tip: arahkan buah ke tengah, cahaya cukup. Deteksi tiap 400ms saat kamera aktif.</small>
+    <small>Tip: arahkan buah ke tengah, cahaya cukup. Deteksi tiap 600ms (320px, live skip rembg) saat kamera aktif.</small>
   </div>
 
   <div class="card">
@@ -106,14 +106,14 @@ window.addEventListener('resize', resizeOverlay);
 
 async function startCam(){
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment", width:640, height:480}, audio:false});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment", width:320, height:240}, audio:false});
     video.srcObject=stream;
     await video.play();
     document.getElementById('noCam').style.display='none';
     document.getElementById('btnStart').style.display='none';
     document.getElementById('btnStop').style.display='inline-block';
     resizeOverlay();
-    timer=setInterval(captureAndPredict, 400);
+    timer=setInterval(captureAndPredict, 600);
   }catch(e){
     document.getElementById('noCam').style.display='block';
     alert('Gagal akses kamera: '+e.message+' — gunakan Upload.');
@@ -128,18 +128,24 @@ function stopCam(){
   octx.clearRect(0,0,overlay.width,overlay.height);
 }
 
+let pending=false;
 async function captureAndPredict(){
-  if(!video.videoWidth) return;
-  hidden.width=640; hidden.height=480;
+  if(!video.videoWidth || pending) return;
+  pending=true;
+  hidden.width=320; hidden.height=240;
   hctx.drawImage(video,0,0,hidden.width,hidden.height);
-  const b64=hidden.toDataURL('image/jpeg',0.7);
+  const b64=hidden.toDataURL('image/jpeg',0.5);
   const t0=performance.now();
-  const r=await fetch('/predict',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image:b64})});
-  const j=await r.json();
-  const dt=(performance.now()-t0).toFixed(0);
-  window.lastBboxes = j.bboxes || (j.bbox ? [Object.assign({}, j.bbox, {label: j.hasil.split(' ')[0], prob: j.semua_deteksi?.[0]?.probabilitas})] : []);
-  renderResult(j, dt);
-  drawBox(j.bbox);
+  try{
+    const r=await fetch('/predict',{method:'POST', headers:{'Content-Type':'application/json', 'X-Live':'1'}, body:JSON.stringify({image:b64})});
+    const j=await r.json();
+    const dt=(performance.now()-t0).toFixed(0);
+    window.lastBboxes = j.bboxes || (j.bbox ? [Object.assign({}, j.bbox, {label: j.hasil.split(' ')[0], prob: j.semua_deteksi?.[0]?.probabilitas})] : []);
+    const fpsEl=document.getElementById('fps');
+    if(fpsEl) fpsEl.textContent = j.latency_ms ? `${j.latency_ms}ms / ${dt}ms` : `${dt}ms`;
+    renderResult(j, dt);
+    drawBox(j.bbox);
+  }catch(e){ console.error(e); } finally{ pending=false; }
 }
 
 async function captureOnce(){
@@ -155,29 +161,22 @@ async function captureOnce(){
 
 function drawBox(bbox){
   octx.clearRect(0,0,overlay.width,overlay.height);
-  // dukung multi-bbox
-  let boxes = [];
-  if (Array.isArray(window.lastBboxes) && window.lastBboxes.length) boxes = window.lastBboxes;
-  else if(bbox) boxes = [bbox];
-  if(!boxes.length) return;
+  // single deteksi: hanya bbox utama
+  let box = null;
+  if (Array.isArray(window.lastBboxes) && window.lastBboxes.length) box = window.lastBboxes[0];
+  else if(bbox) box = bbox;
+  else if(window.lastBbox) box = window.lastBbox;
+  if(!box) return;
   const scaleX=overlay.width/500;
-  const colors=['#22c55e','#3b82f6','#eab308','#ef4444','#a855f7','#06b6d4','#f97316','#84cc16'];
-  boxes.forEach((b,i)=>{
-    const x=b.x*scaleX, y=b.y*scaleX, w=b.w*scaleX, h=b.h*scaleX;
-    const col=colors[i%colors.length];
-    octx.strokeStyle=col; octx.lineWidth=3; octx.strokeRect(x,y,w,h);
-    octx.fillStyle=col; octx.font='12px system-ui';
-    const lbl = b.label ? `${b.label} ${b.prob}%` : document.getElementById('hasil').textContent;
-    octx.fillText(lbl, x, Math.max(12,y-6));
-  });
+  const x=box.x*scaleX, y=box.y*scaleX, w=box.w*scaleX, h=box.h*scaleX;
+  octx.strokeStyle='#22c55e'; octx.lineWidth=3; octx.strokeRect(x,y,w,h);
+  octx.fillStyle='#22c55e'; octx.font='12px system-ui';
+  const lbl = box.label ? `${box.label} ${box.prob}%` : document.getElementById('hasil').textContent;
+  octx.fillText(lbl, x, Math.max(12,y-6));
 }
 
 function renderResult(j, dt){
   document.getElementById('hasil').textContent = j.hasil || j.error || '—';
-  // tampilkan multi-bbox ringkas
-  if(j.bboxes && j.bboxes.length>1){
-    document.getElementById('hasil').textContent += ` [${j.bboxes.length} buah]`;
-  }
   document.getElementById('latency').textContent = j.latency_ms ? `latency ${j.latency_ms} ms (total ${dt} ms)` : '';
   const kv=document.getElementById('kv');
   if(j.fitur && Object.keys(j.fitur).length){
